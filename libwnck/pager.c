@@ -61,6 +61,8 @@
 
 struct _WnckPagerPrivate
 {
+  WnckHandle *handle;
+
   WnckScreen *screen;
 
   int n_rows; /* really columns for vertical orientation */
@@ -88,6 +90,17 @@ struct _WnckPagerPrivate
   guint dnd_activate; /* GSource that triggers switching to this workspace during dnd */
   guint dnd_time; /* time of last event during dnd (for delayed workspace activation) */
 };
+
+enum
+{
+  PROP_0,
+
+  PROP_HANDLE,
+
+  LAST_PROP
+};
+
+static GParamSpec *pager_properties[LAST_PROP] = { NULL };
 
 G_DEFINE_TYPE_WITH_PRIVATE (WnckPager, wnck_pager, GTK_TYPE_WIDGET);
 
@@ -233,12 +246,75 @@ wnck_pager_init (WnckPager *pager)
 }
 
 static void
+wnck_pager_get_property (GObject    *object,
+                         guint       property_id,
+                         GValue     *value,
+                         GParamSpec *pspec)
+{
+  WnckPager *self;
+
+  self = WNCK_PAGER (object);
+
+  switch (property_id)
+    {
+      case PROP_HANDLE:
+        g_value_set_object (value, self->priv->handle);
+        break;
+
+      default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+        break;
+    }
+}
+
+static void
+wnck_pager_set_property (GObject      *object,
+                         guint         property_id,
+                         const GValue *value,
+                         GParamSpec   *pspec)
+{
+  WnckPager *self;
+
+  self = WNCK_PAGER (object);
+
+  switch (property_id)
+    {
+      case PROP_HANDLE:
+        g_assert (self->priv->handle == NULL);
+        self->priv->handle = g_value_dup_object (value);
+        break;
+
+      default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
+        break;
+    }
+}
+
+static void
+install_properties (GObjectClass *object_class)
+{
+  pager_properties[PROP_HANDLE] =
+    g_param_spec_object ("handle",
+                         "handle",
+                         "handle",
+                         WNCK_TYPE_HANDLE,
+                         G_PARAM_CONSTRUCT_ONLY |
+                         G_PARAM_READWRITE |
+                         G_PARAM_EXPLICIT_NOTIFY |
+                         G_PARAM_STATIC_STRINGS);
+
+  g_object_class_install_properties (object_class, LAST_PROP, pager_properties);
+}
+
+static void
 wnck_pager_class_init (WnckPagerClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
 
   object_class->finalize = wnck_pager_finalize;
+  object_class->get_property = wnck_pager_get_property;
+  object_class->set_property = wnck_pager_set_property;
 
   widget_class->realize = wnck_pager_realize;
   widget_class->unrealize = wnck_pager_unrealize;
@@ -262,6 +338,8 @@ wnck_pager_class_init (WnckPagerClass *klass)
   widget_class->drag_end = wnck_pager_drag_end;
   widget_class->query_tooltip = wnck_pager_query_tooltip;
 
+  install_properties (object_class);
+
   gtk_widget_class_set_css_name (widget_class, "wnck-pager");
 }
 
@@ -284,6 +362,8 @@ wnck_pager_finalize (GObject *object)
       pager->priv->dnd_activate = 0;
     }
 
+  g_clear_object (&pager->priv->handle);
+
   G_OBJECT_CLASS (wnck_pager_parent_class)->finalize (object);
 }
 
@@ -291,12 +371,16 @@ static void
 _wnck_pager_set_screen (WnckPager *pager)
 {
   GdkScreen *gdkscreen;
+  int screen_number;
 
   if (!gtk_widget_has_screen (GTK_WIDGET (pager)))
     return;
 
   gdkscreen = gtk_widget_get_screen (GTK_WIDGET (pager));
-  pager->priv->screen = wnck_screen_get (gdk_x11_screen_get_screen_number (gdkscreen));
+  screen_number = gdk_x11_screen_get_screen_number (gdkscreen);
+
+  pager->priv->screen = wnck_handle_get_screen (pager->priv->handle,
+                                                screen_number);
 
   if (!wnck_pager_set_layout_hint (pager))
     {
@@ -2193,9 +2277,32 @@ wnck_pager_new (void)
 {
   WnckPager *pager;
 
-  pager = g_object_new (WNCK_TYPE_PAGER, NULL);
+  pager = g_object_new (WNCK_TYPE_PAGER,
+                        "handle", _wnck_get_handle (),
+                        NULL);
 
   return GTK_WIDGET (pager);
+}
+
+/**
+ * wnck_pager_new_with_handle:
+ * @handle: a #WnckHandle
+ *
+ * Creates a new #WnckPager. The #WnckPager will show the #WnckWorkspace of the
+ * #WnckScreen it is on.
+ *
+ * Returns: a newly created #WnckPager.
+ */
+GtkWidget *
+wnck_pager_new_with_handle (WnckHandle *handle)
+{
+  WnckPager *self;
+
+  self = g_object_new (WNCK_TYPE_PAGER,
+                       "handle", handle,
+                       NULL);
+
+  return GTK_WIDGET (self);
 }
 
 static gboolean
